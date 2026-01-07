@@ -41,7 +41,7 @@ if search_id:
 st.markdown("<h1 style='text-align: center;'>📊 投資實時戰情室</h1>", unsafe_allow_html=True)
 
 # 貼入你指定 StockData 分頁的 CSV 網址
-SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmeA8nukY_OkQ-2cIVHG5Hzu7ZNyYWgiXRn9JILLe-EX0y7SpA5U2Yt94NT8x4xJRksitesk1ninV4/pub?gid=2040510123&single=true&output=csv"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmeA8nukY_OkQ-2cIVHG5Hzu7ZNyYWgiXRn9JILLe-EX0y7SpA5U2Yt94NT8x4xJRksitesk1ninV4/pub?gid=0&single=true&output=csv"
 
 try:
     df = load_data(SHEET_URL)
@@ -89,3 +89,4 @@ try:
 except Exception as e:
     st.error(f"連線暫時中斷：{e}")
     st.info("Yahoo 伺服器冷卻中，請 15 分鐘後再重新整理網頁。")
+
