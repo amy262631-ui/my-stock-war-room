@@ -1,74 +1,96 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import plotly.express as px
+import datetime
 
-# 1. 網頁基本設定 (前端 HTML 風格)
-st.set_page_config(page_title="小白股票戰情室", layout="wide")
+st.set_page_config(page_title="專業級股票戰情室", layout="wide")
 
-# 使用 HTML 語法做一個漂亮的標題列
+# --- 1. 更新慢的解決方案：緩存設定 ---
+# 透過 st.cache_data 讓網頁讀取更快，且設定每 5 分鐘強制更新一次
+@st.cache_data(ttl=300) 
+def get_stock_data(url):
+    return pd.read_csv(url)
+
+# --- 2. 前端美化 (HTML) ---
 st.markdown("""
-    <div style="background-color:#003366; padding:20px; border-radius:15px; margin-bottom:25px">
-        <h1 style="color:white; text-align:center; font-family:sans-serif;">📈 我的投資實時戰情室</h1>
-        <p style="color:#D1D5DB; text-align:center;">數據自動同步自 Google Sheets</p>
+    <div style="background-color:#0f172a; padding:20px; border-radius:15px; margin-bottom:25px">
+        <h1 style="color:white; text-align:center;">💎 智能投資決策戰情室</h1>
     </div>
 """, unsafe_allow_html=True)
 
-# 2. 設定你的 Google Sheet CSV 連結 (請記得更換成你自己的網址)
-# 步驟：Google Sheet -> 檔案 -> 共用 -> 發布到網路 -> 選擇 CSV -> 複製網址
+# --- 3. 診斷區 (互動功能) ---
+st.sidebar.header("🔍 股票快速診斷")
+search_id = st.sidebar.text_input("輸入代碼看建議 (例: 2330.TW)", "2330.TW")
+if search_id:
+    s_info = yf.Ticker(search_id)
+    # 抓取中文名稱 (yf 有時只給英文，若無則顯示代碼)
+    s_name = s_info.info.get('longName', search_id)
+    s_price = s_info.history(period="1d")['Close'].iloc[-1]
+    pe_ratio = s_info.info.get('trailingPE', 0)
+    
+    st.sidebar.write(f"**名稱：** {s_name}")
+    st.sidebar.write(f"**現價：** {s_price:.2f}")
+    
+    # 判斷建議
+    if pe_ratio > 0:
+        if pe_ratio < 15:
+            st.sidebar.success("✅ 長期建議：價值低估，適合長線佈局。")
+        elif pe_ratio < 25:
+            st.sidebar.info("🟡 長期建議：估值合理。")
+        else:
+            st.sidebar.warning("⚠️ 長期建議：目前偏貴，小心追高。")
+    
+    # 短期建議 (簡單均線判斷)
+    hist = s_info.history(period="20d")
+    ma20 = hist['Close'].mean()
+    if s_price > ma20:
+        st.sidebar.success("🚀 短期建議：強勢上漲中，具動能。")
+    else:
+        st.sidebar.warning("📉 短期建議：走勢偏弱，建議觀望。")
+
+# --- 4. 對帳單核心邏輯 ---
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmeA8nukY_OkQ-2cIVHG5Hzu7ZNyYWgiXRn9JILLe-EX0y7SpA5U2Yt94NT8x4xJRksitesk1ninV4/pub?gid=0&single=true&output=csv"
 
 try:
-    # 讀取資料
-    df = pd.read_csv(SHEET_URL)
-    
-    # 強制將 ID 轉為字串並移除空白
+    df = get_stock_data(SHEET_URL)
     df['ID'] = df['ID'].astype(str).str.strip()
     
-    # 3. 後端邏輯計算
-    total_cost = 0
+    total_cost_with_fee = 0
     total_value = 0
     details = []
 
-    with st.spinner('正在從交易所抓取最新行情...'):
-        for _, row in df.iterrows():
-            stock = yf.Ticker(row['ID'])
-            # 抓取最新收盤價
-            price_data = stock.history(period="1d")
-            if not price_data.empty:
-                cur_price = price_data['Close'].iloc[-1]
-                cost = row['Price'] * row['Qty']
-                market_value = cur_price * row['Qty']
-                profit = market_value - cost
-                roi = (profit / cost) * 100 if cost > 0 else 0
-                
-                total_cost += cost
-                total_value += market_value
-                
-                details.append({
-                    "代碼": row['ID'],
-                    "成本價": row['Price'],
-                    "現價": round(cur_price, 2),
-                    "股數": row['Qty'],
-                    "損益": round(profit, 0),
-                    "報酬率(%)": f"{roi:.2f}%"
-                })
+    for _, row in df.iterrows():
+        tk = yf.Ticker(row['ID'])
+        cur_price = tk.history(period="1d")['Close'].iloc[-1]
+        name = tk.info.get('longName', row['ID'])
+        
+        # 成本計算：(單價 * 股數) + 手續費
+        cost = (row['Price'] * row['Qty']) + row.get('Fee', 0)
+        mkt_val = cur_price * row['Qty']
+        profit = mkt_val - cost
+        roi = (profit / cost) * 100 if cost > 0 else 0
+        
+        total_cost_with_fee += cost
+        total_value += mkt_val
+        
+        details.append({
+            "股票名稱": name,
+            "代碼": row['ID'],
+            "手續費": row.get('Fee', 0),
+            "總成本": f"{cost:,.0f}",
+            "現價": f"{cur_price:.2f}",
+            "損益": f"{profit:,.0f}",
+            "報酬率": f"{roi:.2f}%"
+        })
 
-    # 4. 前端展示：大數字卡片
-    total_profit = total_value - total_cost
-    total_roi = (total_profit / total_cost) * 100 if total_cost > 0 else 0
-    
-    col1, col2, col3 = st.columns(3)
-    col1.metric("當前總市值", f"${total_value:,.0f}")
-    col2.metric("總損益", f"${total_profit:,.0f}", f"{total_roi:.2f}%")
-    col3.metric("投入本金", f"${total_cost:,.0f}")
+    # 顯示總表
+    c1, c2, c3 = st.columns(3)
+    c1.metric("總市值", f"${total_value:,.0f}")
+    c2.metric("總損益(含手續費)", f"${(total_value - total_cost_with_fee):,.0f}")
+    c3.metric("總投入成本", f"${total_cost_with_fee:,.0f}")
 
-    # 5. 展示明細清單
-    st.subheader("🗂️ 持股明細")
+    st.write("### 🗂️ 詳細持股清單")
     st.table(pd.DataFrame(details))
 
 except Exception as e:
-    st.error(f"目前讀取不到數據。請確認 Google Sheets 是否已發布為 CSV，並將網址填入程式碼中。")
-
-    st.info("錯誤提示: " + str(e))
-
+    st.info("正在等待 Google Sheets 資料... 請確保 CSV 網址已填入。")
