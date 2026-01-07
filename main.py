@@ -16,7 +16,7 @@ st.markdown("""
 
 # 2. 設定你的 Google Sheet CSV 連結 (請記得更換成你自己的網址)
 # 步驟：Google Sheet -> 檔案 -> 共用 -> 發布到網路 -> 選擇 CSV -> 複製網址
-SHEET_URL = "請在此處貼上你的CSV網址"
+SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmeA8nukY_OkQ-2cIVHG5Hzu7ZNyYWgiXRn9JILLe-EX0y7SpA5U2Yt94NT8x4xJRksitesk1ninV4/pub?output=csv"
 
 try:
     # 讀取資料
@@ -69,4 +69,5 @@ try:
 
 except Exception as e:
     st.error(f"目前讀取不到數據。請確認 Google Sheets 是否已發布為 CSV，並將網址填入程式碼中。")
+
     st.info("錯誤提示: " + str(e))
