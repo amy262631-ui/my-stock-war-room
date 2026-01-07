@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 
-st.set_page_config(page_title="智能投資戰情室", layout="wide")
+st.set_page_config(page_title="智能投資決策戰情室", layout="wide")
 
-# --- 1. 緩存優化 (設定 10 分鐘更新一次，避免被鎖頻率) ---
+# --- 1. 緩存設定 (10分鐘更新一次，保護連線) ---
 @st.cache_data(ttl=600)
 def load_data(url):
     df = pd.read_csv(url)
@@ -18,29 +18,27 @@ search_id = st.sidebar.text_input("輸入代碼看建議 (例: 2330.TW)", "2330.
 if search_id:
     try:
         s_stock = yf.Ticker(search_id)
-        # 顯示中文名或簡稱
         s_name = s_stock.info.get('longName') or s_stock.info.get('shortName') or search_id
         s_price = s_stock.history(period="1d")['Close'].iloc[-1]
         
         st.sidebar.markdown(f"### 📋 {s_name}\n**現價：{s_price:.2f}**")
         
         pe = s_stock.info.get('trailingPE', 0)
-        hist = s_stock.history(period="20d")
-        ma20 = hist['Close'].mean()
+        ma20 = s_stock.history(period="20d")['Close'].mean()
         
         st.sidebar.markdown("---")
         if pe > 0:
-            if pe < 15: st.sidebar.success("✅ 長期：估值低，適合存股。")
+            if pe < 15: st.sidebar.success("✅ 長期：價值低估，適合存股。")
             elif pe < 25: st.sidebar.info("🟡 長期：股價合理。")
             else: st.sidebar.warning("⚠️ 長期：目前偏貴。")
         
         if s_price > ma20: st.sidebar.success("🚀 短期：強勢上漲中。")
         else: st.sidebar.warning("📉 短期：走勢偏弱。")
     except:
-        st.sidebar.error("請確認代碼包含 .TW (如 0056.TW)")
+        st.sidebar.error("請確認代碼含 .TW")
 
 # --- 3. 主畫面 ---
-st.markdown("<h1 style='text-align: center; color: #1E3A8A;'>📊 投資實時戰情室</h1>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>📊 投資實時戰情室</h1>", unsafe_allow_html=True)
 
 # 貼入你指定 StockData 分頁的 CSV 網址
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmeA8nukY_OkQ-2cIVHG5Hzu7ZNyYWgiXRn9JILLe-EX0y7SpA5U2Yt94NT8x4xJRksitesk1ninV4/pub?gid=2040510123&single=true&output=csv"
@@ -49,34 +47,32 @@ try:
     df = load_data(SHEET_URL)
     total_cost, total_value, details = 0, 0, []
 
-    with st.spinner('同步最新數據中...'):
-        # 批次取得股價資訊以加快速度
-        unique_ids = df['ID'].unique().tolist()
-        stocks_info = yf.download(unique_ids, period="1d", group_by='ticker', threads=True)
+    with st.spinner('同步最新行情中...'):
+        # 批次取得股價
+        stock_list = df['ID'].unique().tolist()
+        # 修正批次抓取邏輯，確保即使只有一支股票也能運作
+        price_df = yf.download(stock_list, period="1d")['Close']
 
         for _, row in df.iterrows():
-            stock_id = str(row['ID']).strip()
-            # 取得該股最新價
-            if len(unique_ids) > 1:
-                cur_p = stocks_info[stock_id]['Close'].iloc[-1]
-            else:
-                cur_p = stocks_info['Close'].iloc[-1]
+            sid = str(row['ID']).strip()
+            # 取得現價
+            cur_p = price_df[sid].iloc[-1] if len(stock_list) > 1 else price_df.iloc[-1]
             
-            # 抓取中文名
-            tk = yf.Ticker(stock_id)
-            name = tk.info.get('longName') or tk.info.get('shortName') or stock_id
+            # 名稱抓取
+            tk = yf.Ticker(sid)
+            name = tk.info.get('longName') or tk.info.get('shortName') or sid
             
             fee = row.get('Fee', 0)
             cost_sum = (row['Price'] * row['Qty']) + fee
-            market_val = cur_p * row['Qty']
-            profit = market_val - cost_sum
+            mkt_val = cur_p * row['Qty']
+            profit = mkt_val - cost_sum
             roi = (profit / cost_sum) * 100 if cost_sum > 0 else 0
             
             total_cost += cost_sum
-            total_value += market_val
+            total_value += mkt_val
             
             details.append({
-                "名稱": name, "代碼": stock_id, "手續費": f"{fee:,.0f}",
+                "名稱": name, "代碼": sid, "手續費": f"{fee:,.0f}",
                 "總成本": f"{cost_sum:,.0f}", "目前市值": f"{market_val:,.0f}",
                 "損益": f"{profit:,.0f}", "報酬率": f"{roi:.2f}%"
             })
@@ -91,5 +87,5 @@ try:
     st.table(pd.DataFrame(details))
 
 except Exception as e:
-    st.error(f"連線失敗：{e}")
-    st.info("Yahoo 伺服器忙碌中，請等待 15 分鐘後重新整理。")
+    st.error(f"連線暫時中斷：{e}")
+    st.info("Yahoo 伺服器冷卻中，請 15 分鐘後再重新整理網頁。")
