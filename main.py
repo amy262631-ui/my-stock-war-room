@@ -1,96 +1,98 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import datetime
 
-st.set_page_config(page_title="專業級股票戰情室", layout="wide")
+# 設定網頁標題與排版
+st.set_page_config(page_title="智能投資決策戰情室", layout="wide")
 
-# --- 1. 更新慢的解決方案：緩存設定 ---
-# 透過 st.cache_data 讓網頁讀取更快，且設定每 5 分鐘強制更新一次
-@st.cache_data(ttl=300) 
-def get_stock_data(url):
-    return pd.read_csv(url)
+# 1. 解決更新慢：使用 Streamlit 緩存，設定 2 分鐘過期一次
+@st.cache_data(ttl=120)
+def load_data(url):
+    df = pd.read_csv(url)
+    df['ID'] = df['ID'].astype(str).str.strip()
+    return df
 
-# --- 2. 前端美化 (HTML) ---
-st.markdown("""
-    <div style="background-color:#0f172a; padding:20px; border-radius:15px; margin-bottom:25px">
-        <h1 style="color:white; text-align:center;">💎 智能投資決策戰情室</h1>
-    </div>
-""", unsafe_allow_html=True)
+# 2. 側邊欄：獨立診斷區 (輸入股票號碼看建議)
+st.sidebar.markdown("## 🔍 智能選股診斷")
+search_id = st.sidebar.text_input("請輸入股票代碼 (例: 2330.TW)", "0056.TW")
 
-# --- 3. 診斷區 (互動功能) ---
-st.sidebar.header("🔍 股票快速診斷")
-search_id = st.sidebar.text_input("輸入代碼看建議 (例: 2330.TW)", "2330.TW")
 if search_id:
-    s_info = yf.Ticker(search_id)
-    # 抓取中文名稱 (yf 有時只給英文，若無則顯示代碼)
-    s_name = s_info.info.get('longName', search_id)
-    s_price = s_info.history(period="1d")['Close'].iloc[-1]
-    pe_ratio = s_info.info.get('trailingPE', 0)
-    
-    st.sidebar.write(f"**名稱：** {s_name}")
-    st.sidebar.write(f"**現價：** {s_price:.2f}")
-    
-    # 判斷建議
-    if pe_ratio > 0:
-        if pe_ratio < 15:
-            st.sidebar.success("✅ 長期建議：價值低估，適合長線佈局。")
-        elif pe_ratio < 25:
-            st.sidebar.info("🟡 長期建議：估值合理。")
-        else:
-            st.sidebar.warning("⚠️ 長期建議：目前偏貴，小心追高。")
-    
-    # 短期建議 (簡單均線判斷)
-    hist = s_info.history(period="20d")
-    ma20 = hist['Close'].mean()
-    if s_price > ma20:
-        st.sidebar.success("🚀 短期建議：強勢上漲中，具動能。")
-    else:
-        st.sidebar.warning("📉 短期建議：走勢偏弱，建議觀望。")
+    try:
+        s_stock = yf.Ticker(search_id)
+        s_info = s_stock.info
+        s_name = s_info.get('longName', '找不到名稱')
+        s_price = s_stock.history(period="1d")['Close'].iloc[-1]
+        
+        st.sidebar.markdown(f"### 📋 {s_name}")
+        st.sidebar.metric("目前價格", f"{s_price:.2f}")
 
-# --- 4. 對帳單核心邏輯 ---
+        # 長短期判斷邏輯
+        pe = s_info.get('trailingPE', 0)
+        hist = s_stock.history(period="20d")
+        ma20 = hist['Close'].mean()
+
+        st.sidebar.markdown("---")
+        # 長期建議 (本益比法)
+        if pe > 0:
+            if pe < 15: st.sidebar.success("✅ **長期建議：** 價值低估，適合存股佈局。")
+            elif pe < 25: st.sidebar.info("🟡 **長期建議：** 股價合理。")
+            else: st.sidebar.warning("⚠️ **長期建議：** 目前太貴，不宜長抱。")
+        
+        # 短期建議 (動能法)
+        if s_price > ma20:
+            st.sidebar.success("🚀 **短期建議：** 強勢上漲中。")
+        else:
+            st.sidebar.warning("📉 **短期建議：** 走勢偏弱。")
+            
+    except:
+        st.sidebar.error("請確認代碼是否正確 (需含 .TW)")
+
+# 3. 主畫面：投資對帳單
+st.markdown("<h1 style='text-align: center; color: #1E3A8A;'>📈 我的投資實時戰情室</h1>", unsafe_allow_html=True)
+
+# 你的 Google Sheet CSV 網址
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmeA8nukY_OkQ-2cIVHG5Hzu7ZNyYWgiXRn9JILLe-EX0y7SpA5U2Yt94NT8x4xJRksitesk1ninV4/pub?gid=0&single=true&output=csv"
 
 try:
-    df = get_stock_data(SHEET_URL)
-    df['ID'] = df['ID'].astype(str).str.strip()
+    data = load_data(SHEET_URL)
     
-    total_cost_with_fee = 0
+    total_cost = 0
     total_value = 0
     details = []
 
-    for _, row in df.iterrows():
+    for _, row in data.iterrows():
         tk = yf.Ticker(row['ID'])
-        cur_price = tk.history(period="1d")['Close'].iloc[-1]
+        curr_p = tk.history(period="1d")['Close'].iloc[-1]
         name = tk.info.get('longName', row['ID'])
         
-        # 成本計算：(單價 * 股數) + 手續費
-        cost = (row['Price'] * row['Qty']) + row.get('Fee', 0)
-        mkt_val = cur_price * row['Qty']
-        profit = mkt_val - cost
-        roi = (profit / cost) * 100 if cost > 0 else 0
+        # 成本滾算公式：(買入單價 * 股數) + 手續費
+        # 注意：你的 Google Sheets 需增加一欄名為 Fee
+        fee = row.get('Fee', 0)
+        cost_sum = (row['Price'] * row['Qty']) + fee
+        market_val = curr_p * row['Qty']
+        profit = market_val - cost_sum
+        roi = (profit / cost_sum) * 100 if cost_sum > 0 else 0
         
-        total_cost_with_fee += cost
-        total_value += mkt_val
+        total_cost += cost_sum
+        total_value += market_val
         
         details.append({
-            "股票名稱": name,
+            "名稱": name,
             "代碼": row['ID'],
-            "手續費": row.get('Fee', 0),
-            "總成本": f"{cost:,.0f}",
-            "現價": f"{cur_price:.2f}",
+            "手續費": fee,
+            "總成本": f"{cost_sum:,.0f}",
             "損益": f"{profit:,.0f}",
             "報酬率": f"{roi:.2f}%"
         })
 
-    # 顯示總表
+    # 看板顯示
     c1, c2, c3 = st.columns(3)
     c1.metric("總市值", f"${total_value:,.0f}")
-    c2.metric("總損益(含手續費)", f"${(total_value - total_cost_with_fee):,.0f}")
-    c3.metric("總投入成本", f"${total_cost_with_fee:,.0f}")
+    c2.metric("總淨損益 (含手續費)", f"${(total_value - total_cost):,.0f}")
+    c3.metric("總投入金額", f"${total_cost:,.0f}")
 
-    st.write("### 🗂️ 詳細持股清單")
+    st.write("### 🗂️ 持股詳細明細")
     st.table(pd.DataFrame(details))
 
 except Exception as e:
-    st.info("正在等待 Google Sheets 資料... 請確保 CSV 網址已填入。")
+    st.info("請確認 Google Sheet 已填寫資料並發布 CSV。")
