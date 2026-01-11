@@ -6,14 +6,14 @@ import plotly.express as px
 # 1. 網頁基礎配置
 st.set_page_config(page_title="個人資產決策管理系統", layout="wide")
 
-# --- 2. 數據處理與緩存 ---
+# --- 2. 數據處理與緩存 (強化過濾機制) ---
 @st.cache_data(ttl=600)
 def load_data(url):
     df = pd.read_csv(url)
     df.columns = [str(c).strip() for c in df.columns]
-    # 清洗 ID：轉大寫、修剪空白、過濾空值，確保代碼正確
+    # 【核心修復】自動清洗 ID：轉大寫、修剪空白、只保留正確含 ".TW" 或 ".TWO" 的代碼
     df['ID'] = df['ID'].astype(str).str.strip().str.upper()
-    df = df[df['ID'].str.contains(r'\.TW$', na=False)] # 只保留含 .TW 的正確格式
+    df = df[df['ID'].str.contains(r'\.TW', na=False)]
     return df
 
 # --- 3. 側邊欄：目標設定與智能診斷 ---
@@ -59,7 +59,7 @@ SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTmeA8nukY_OkQ-2cIV
 try:
     raw_df = load_data(SHEET_URL)
     
-    # 合併重複 ID 邏輯
+    # 【功能 1：合併重複持股】
     raw_df['Cost_Total'] = raw_df['Price'] * raw_df['Qty']
     grouped = raw_df.groupby('ID').agg({'Qty': 'sum', 'Cost_Total': 'sum', 'Fee': 'sum'}).reset_index()
     grouped['Final_Cost'] = grouped['Cost_Total'] + grouped['Fee']
@@ -67,19 +67,19 @@ try:
     details = []
     with st.spinner('同步最新股市數據與股利估算...'):
         id_list = grouped['ID'].tolist()
-        # 批次下載價格避免頻繁請求導致 400 錯誤
+        # 批次下載價格避免 HTTP 400 錯誤
         all_prices = yf.download(id_list, period="5d", group_by='ticker', progress=False)
 
         for _, row in grouped.iterrows():
             sid = row['ID']
             tk = yf.Ticker(sid)
-            # 取得現價 (處理單一與多個代碼的回傳結構)
+            # 取得現價
             curr_p = all_prices[sid]['Close'].iloc[-1] if len(id_list) > 1 else all_prices['Close'].iloc[-1]
             
-            # 自動中文名
+            # 【功能 2：自動中文名稱】
             name = tk.info.get('shortName') or tk.info.get('longName') or sid
             
-            # 預估股利
+            # 【功能 3：自動推算股利】
             div_rate = tk.info.get('dividendRate', 0)
             if not div_rate:
                 div_rate = curr_p * tk.info.get('dividendYield', 0)
@@ -105,14 +105,14 @@ try:
     total_div = final_df['年領股息'].sum()
     total_cost = final_df['總成本'].sum()
 
-    # --- 頂部看板 ---
+    # --- 數據看板 ---
     c1, c2, c3 = st.columns(3)
     c1.metric("當前總資產", f"${total_mv:,.0f}")
     c2.metric("預估年領股息", f"${total_div:,.0f}")
     c3.metric("目標達成率", f"{(total_div/annual_target*100):.1f}%")
     st.progress(min(total_div / annual_target, 1.0))
 
-    # --- 視覺化圖表與風險控管 ---
+    # --- 視覺化分析 ---
     col_chart, col_risk = st.columns([1, 1.5])
     with col_chart:
         st.write("### 🍰 資產配置佔比")
@@ -123,16 +123,16 @@ try:
         st.write("### 📢 風險控管指南")
         max_stock = final_df.loc[final_df['市值'].idxmax()]
         if (max_stock['市值'] / total_mv) > 0.35:
-            st.error(f"⚠️ 警報：**{max_stock['名稱']}** 佔比達 {max_stock['市值']/total_mv*100:.1f}%，建議分散投資。")
+            st.error(f"⚠️ 警報：**{max_stock['名稱']}** 佔比達 {max_stock['市值']/total_mv*100:.1f}%，建議分散佈局。")
         else:
-            st.success("✅ 持股比例健康，風險分散良好。")
+            st.success("✅ 持股分配均衡，風險管控良好。")
             
         for _, r in final_df.iterrows():
             if "🔥" in r['管理信號']:
                 st.warning(f"🔔 {r['名稱']}：目前報酬率極佳 ({r['報酬率%']:.1f}%)，可考慮部分減碼。")
 
-    # --- 詳細明細與總計 ---
-    st.write("### 🗂️ 已合併成本之持股清單")
+    # --- 總表顯示 ---
+    st.write("### 🗂️ 已合併持股詳細清單")
     summary = pd.DataFrame([{
         "名稱": "✨ 總計", "代碼": "-", "持股數": "-", "總成本": total_cost,
         "市值": total_mv, "損益": total_mv - total_cost, 
